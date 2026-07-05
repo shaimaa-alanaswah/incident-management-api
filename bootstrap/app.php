@@ -6,6 +6,7 @@ use App\Http\Middleware\VerifyWebhookSignature;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Support\Facades\Route;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -14,8 +15,11 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
         then: function () {
+            // SubstituteBindings must run after resolve.tenant so route-model-bound
+            // lookups (e.g. {incident}) are already scoped by BelongsToTenant —
+            // this custom group doesn't get it for free like the default api/web groups do.
             Route::prefix('api/v1')
-                ->middleware(['resolve.tenant', 'throttle.tenant'])
+                ->middleware(['resolve.tenant', 'throttle.tenant', SubstituteBindings::class])
                 ->group(base_path('routes/tenant.php'));
         },
     )
