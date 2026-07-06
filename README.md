@@ -1,66 +1,145 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Incident Management SaaS API
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+A production-grade, multi-tenant incident management backend — think PagerDuty/OpsGenie — built as a portfolio project to demonstrate real-world backend architecture: strict tenant isolation, queue-based ingestion that survives alert floods, a severity-gated state machine with an append-only audit trail, and a time-based escalation engine. Backend API only; no frontend.
 
-## About Laravel
+## Architecture Overview
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+```
+ Monitoring tools (Datadog, Grafana, ...)
+        │  POST /api/v1/alerts  (202 Accepted — returns immediately)
+        ▼
+ ┌─────────────────┐   alerts queue   ┌────────────────────────┐
+ │ AlertController ├──────────────────► ProcessIncomingAlert   │
+ └─────────────────┘                  │  · Redis dedup (5 min) │
+                                      │  · creates Incident    │
+                                      └───────────┬────────────┘
+                                                  │ escalations queue
+                                                  ▼
+ ┌────────────────────┐  every minute  ┌──────────────────────┐
+ │ incidents:escalate ├────────────────► EscalationEngine     │
+ │    (scheduler)     │                │ · which step is due? │
+ └────────────────────┘                └───────────┬──────────┘
+                                                   │ notifications queue
+                                                   ▼
+                                       ┌──────────────────┐
+                                       │ SendNotification │──► notification_logs
+                                       └──────────────────┘
+```
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+- **Multi-tenant isolation** — every model uses a `BelongsToTenant` global scope. The `ResolveTenant` middleware authenticates the SHA-256-hashed bearer key, binds the tenant into the container, and from that point every Eloquent query is automatically scoped. Cross-tenant lookups 404 at the route-binding layer; they never reach controller code.
+- **Queue-based alert pipeline (the 202 pattern)** — ingestion does one lightweight insert and returns `202 Accepted`. Deduplication, incident creation, and notifications all happen in queue workers, so the API stays responsive under alert floods.
+- **State machine with severity-gated transitions** — `open → acknowledged → resolved → closed`, enforced by `IncidentStateMachine`. P1/P2 incidents must be acknowledged before they can be resolved; P3/P4 may resolve directly. Every transition writes a row to the append-only `incident_state_logs` audit table inside the same DB transaction.
+- **Redis deduplication and caching** — alert fingerprints (`SHA-256(tenant|source|title)`) are set with `SET NX EX 300`, collapsing repeats within a 5-minute window. The on-call resolver caches per-tenant for 60 seconds. Per-tenant rate-limit counters also live in Redis.
+- **Two escalation mechanisms, by design** — an immediate on-call ping when an incident is first created, and a scheduler-driven ladder (`incidents:escalate`, every minute) that walks a policy's steps (each with its own delay and channel) with optional repeat loops until the incident is acknowledged.
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+## Tech Stack
 
-## Learning Laravel
+| Layer | Choice |
+|---|---|
+| Framework | Laravel 12 (PHP 8.2) |
+| Database | MySQL 8 |
+| Cache / queues / dedup / rate limiting | Redis 7 (predis) |
+| Background work | Laravel Queues (dedicated `alerts`, `escalations`, `notifications` queues) |
+| Tests | Pest 3 |
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+## Key Design Decisions
 
-You may also try the [Laravel Bootcamp](https://bootcamp.laravel.com), where you will be guided through building a modern Laravel application from scratch.
+- **Global scope over `where('tenant_id', ...)` discipline.** Tenant filtering that depends on every developer remembering a `where` clause eventually leaks. A boot-level global scope makes isolation the default and un-scoping the deliberate exception (system-wide sweeps like the escalation scheduler explicitly opt out and pass tenant ids around).
+- **API keys are hashed, never stored.** Only `SHA-256(key)` is persisted; the plaintext is shown once at creation. A leaked database dump yields no usable credentials. Keys are individually revocable and support optional expiry.
+- **`202 Accepted` + queues instead of synchronous processing.** An alert flood should never take down the ingestion endpoint. The controller's only job is validate → insert → enqueue; everything heavier is a worker's problem.
+- **A state machine service instead of scattered status writes.** One service owns transitions, timestamps, and audit rows atomically — and it is the single place the severity gate lives. Invalid transitions throw; nothing else in the codebase writes `incidents.status`.
+- **Redis `SET NX EX` for dedup instead of DB uniqueness.** Deduplication is a time-windowed concern, not a permanent constraint. An atomic Redis set with TTL gives one-round-trip dedup with automatic expiry and no cleanup jobs.
+- **Append-only audit log.** `incident_state_logs` has no update path (no `updated_at`, `const UPDATED_AT = null`) — history cannot be rewritten, which is the point of an audit trail.
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+## Local Setup
 
-## Laravel Sponsors
+**Requirements:** PHP 8.2+, Composer, MySQL 8, Redis 7 (on Windows: [Memurai](https://www.memurai.com/) works well).
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+```bash
+git clone <repo-url> incident-management && cd incident-management
+composer install
+cp .env.example .env
+php artisan key:generate
+```
 
-### Premium Partners
+Create the database and a scoped user (adjust credentials to taste), then fill in `DB_*` in `.env`:
 
-- **[Vehikl](https://vehikl.com/)**
-- **[Tighten Co.](https://tighten.co)**
-- **[WebReinvent](https://webreinvent.com/)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel/)**
-- **[Cyber-Duck](https://cyber-duck.co.uk)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Jump24](https://jump24.co.uk)**
-- **[Redberry](https://redberry.international/laravel/)**
-- **[Active Logic](https://activelogic.com)**
-- **[byte5](https://byte5.de)**
-- **[OP.GG](https://op.gg)**
+```sql
+CREATE DATABASE incident_management CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'incident_mgmt'@'localhost' IDENTIFIED BY '<your-password>';
+GRANT ALL PRIVILEGES ON incident_management.* TO 'incident_mgmt'@'localhost';
+```
 
-## Contributing
+```bash
+php artisan migrate
+```
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+Run the API, workers, and scheduler (each in its own terminal):
 
-## Code of Conduct
+```bash
+php artisan serve                                                   # API
+php artisan queue:work --queue=alerts,escalations,notifications    # queue workers
+php artisan schedule:work                                           # fires incidents:escalate every minute
+```
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+## Running Tests
 
-## Security Vulnerabilities
+Tests run against MySQL (the stats aggregations use `TIMESTAMPDIFF`, which SQLite doesn't have) on a **separate** database so dev data is never wiped. One-time setup:
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+```sql
+CREATE DATABASE incident_management_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+GRANT ALL PRIVILEGES ON incident_management_test.* TO 'incident_mgmt'@'localhost';
+```
 
-## License
+Copy `.env` to `.env.testing`, set `APP_ENV=testing` and `DB_DATABASE=incident_management_test`, then:
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+```bash
+php artisan test --env=testing
+```
+
+Redis must be running — the rate-limiting tests exercise the real Redis counters.
+
+## API Reference
+
+All endpoints are under `/api/v1` and require `Authorization: Bearer <api-key>`, with per-tenant rate limiting (free: 60/min, pro: 600/min, enterprise: 6000/min).
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/alerts` | Ingest an alert — returns `202` immediately, processing is queued |
+| GET | `/alerts` | List alerts (filter: `status`, `severity`, `source`; paginated) |
+| GET | `/incidents` | List incidents (filter: `status`, `severity`; paginated) |
+| GET | `/incidents/{id}` | Incident detail with full state history |
+| PATCH | `/incidents/{id}/acknowledge` | Transition `open → acknowledged` |
+| PATCH | `/incidents/{id}/resolve` | Transition to `resolved` (P1/P2 must be acknowledged first) |
+| PATCH | `/incidents/{id}/close` | Transition `resolved → closed` |
+| PATCH | `/incidents/{id}/assign-policy` | Attach/detach an escalation policy (`null` detaches) |
+| GET | `/incidents/{id}/logs` | Append-only audit trail for the incident |
+| GET | `/escalation-policies` | List escalation policies |
+| POST | `/escalation-policies` | Create a policy with nested steps (one transaction) |
+| GET | `/escalation-policies/{id}` | Policy detail with ordered steps |
+| PUT | `/escalation-policies/{id}` | Update policy, replacing all steps |
+| DELETE | `/escalation-policies/{id}` | Soft-delete (409 if referenced by an open/acknowledged incident) |
+| GET | `/schedules` | List on-call shifts (`is_on_call` flag on each) |
+| POST | `/schedules` | Create a shift (warns on overlap for the same user) |
+| GET | `/schedules/oncall` | Who is on call right now (404 if nobody) |
+| DELETE | `/schedules/{id}` | Delete a future shift (409 for active/past shifts) |
+| GET | `/notifications` | Notification log (filter: `status`, `channel`, `incident_id`) |
+| GET | `/stats/overview` | Incident counts by status + average MTTR |
+| GET | `/stats/volume` | Alert volume over the last 7 days (`?groupBy=hour\|day`) |
+
+Error semantics: `401` bad/missing/revoked/expired key or inactive tenant · `404` resource not found *or belongs to another tenant* · `409` conflicting state (policy in use, active shift) · `422` validation failure or invalid state transition · `429` rate limit exceeded (includes `retry_after`).
+
+## Load Testing
+
+```bash
+php artisan simulate:alert-flood --tenant=1 --count=500
+```
+
+Options: `--count` (default 100), `--severity=P1..P4` (default: random per alert). Each simulated alert gets a unique fingerprint, so the flood measures pipeline throughput rather than dedup collapse.
+
+What to observe:
+
+- The command finishes almost instantly — it only inserts rows and enqueues jobs, mirroring how the HTTP endpoint stays fast under load.
+- `php artisan queue:work --queue=alerts,escalations,notifications` — watch the workers drain the backlog; each alert becomes an incident, an escalation evaluation, and a notification.
+- `tail -f storage/logs/laravel.log` — `Simulated notification sent to ...` lines confirm end-to-end delivery; `notification_logs` fills with `sent` rows.
+- `GET /api/v1/stats/overview` and `/stats/volume` — counts update as the backlog drains.
