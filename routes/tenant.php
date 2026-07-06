@@ -3,7 +3,9 @@
 use App\Http\Controllers\AlertController;
 use App\Http\Controllers\EscalationPolicyController;
 use App\Http\Controllers\IncidentController;
+use App\Http\Controllers\NotificationLogController;
 use App\Http\Controllers\OnCallScheduleController;
+use App\Http\Controllers\StatsController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/alerts', [AlertController::class, 'ingest']);
@@ -15,6 +17,7 @@ Route::patch('/incidents/{incident}/acknowledge', [IncidentController::class, 'a
 Route::patch('/incidents/{incident}/resolve', [IncidentController::class, 'resolve']);
 Route::patch('/incidents/{incident}/close', [IncidentController::class, 'close']);
 Route::get('/incidents/{incident}/logs', [IncidentController::class, 'logs']);
+Route::patch('/incidents/{incident}/assign-policy', [IncidentController::class, 'assignPolicy']);
 
 Route::get('/escalation-policies', [EscalationPolicyController::class, 'index']);
 Route::post('/escalation-policies', [EscalationPolicyController::class, 'store']);
@@ -26,3 +29,8 @@ Route::get('/schedules', [OnCallScheduleController::class, 'index']);
 Route::post('/schedules', [OnCallScheduleController::class, 'store']);
 Route::get('/schedules/oncall', [OnCallScheduleController::class, 'currentOnCall']);
 Route::delete('/schedules/{schedule}', [OnCallScheduleController::class, 'destroy']);
+
+Route::get('/notifications', [NotificationLogController::class, 'index']);
+
+Route::get('/stats/overview', [StatsController::class, 'overview']);
+Route::get('/stats/volume', [StatsController::class, 'volume']);

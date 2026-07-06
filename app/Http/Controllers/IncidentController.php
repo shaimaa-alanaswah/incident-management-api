@@ -9,6 +9,7 @@ use App\Models\Incident;
 use App\Services\IncidentStateMachine;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class IncidentController extends Controller
 {
@@ -48,6 +49,24 @@ class IncidentController extends Controller
     public function close(UpdateIncidentStatusRequest $request, Incident $incident): JsonResponse
     {
         return $this->applyTransition($request, $incident, IncidentStatus::Closed);
+    }
+
+    public function assignPolicy(Request $request, Incident $incident): JsonResponse
+    {
+        $validated = $request->validate([
+            'escalation_policy_id' => [
+                'present',
+                'nullable',
+                'integer',
+                Rule::exists('escalation_policies', 'id')
+                    ->where('tenant_id', app('current_tenant')?->id)
+                    ->whereNull('deleted_at'),
+            ],
+        ]);
+
+        $incident->update(['escalation_policy_id' => $validated['escalation_policy_id']]);
+
+        return response()->json($incident->fresh());
     }
 
     public function logs(Request $request, Incident $incident): JsonResponse
