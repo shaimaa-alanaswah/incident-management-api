@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AlertController;
+use App\Http\Controllers\Auth\TenantAuthController;
 use App\Http\Controllers\EscalationPolicyController;
 use App\Http\Controllers\IncidentController;
 use App\Http\Controllers\NotificationLogController;
@@ -8,7 +9,7 @@ use App\Http\Controllers\OnCallScheduleController;
 use App\Http\Controllers\StatsController;
 use Illuminate\Support\Facades\Route;
 
-Route::post('/alerts', [AlertController::class, 'ingest']);
+Route::post('/alerts', [AlertController::class, 'ingest'])->middleware('verify.webhook');
 Route::get('/alerts', [AlertController::class, 'index']);
 
 Route::get('/incidents', [IncidentController::class, 'index']);
@@ -34,3 +35,6 @@ Route::get('/notifications', [NotificationLogController::class, 'index']);
 
 Route::get('/stats/overview', [StatsController::class, 'overview']);
 Route::get('/stats/volume', [StatsController::class, 'volume']);
+
+Route::post('/keys', [TenantAuthController::class, 'generateKey']);
+Route::delete('/keys/{id}', [TenantAuthController::class, 'revokeKey']);

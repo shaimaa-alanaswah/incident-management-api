@@ -161,6 +161,5 @@ What to observe:
 - `GET /api/v1/stats/overview` and `/stats/volume` — counts update as the backlog drains.
 
 ## Roadmap
-- [ ] Postman collection — ready-to-import API testing
+- [ ] Postman collection — ready-to-import API testing (coming soon)
 - [ ] Real notification transport (Laravel Mail + Slack webhooks)
-- [ ] POST /register — tenant self-registration endpoint
