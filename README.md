@@ -1,6 +1,22 @@
 # Incident Management SaaS API
 
+![Tests](https://img.shields.io/badge/tests-35%20passed%20%7C%20137%20assertions-brightgreen)
+![PHP](https://img.shields.io/badge/PHP-8.2-blue)
+![Laravel](https://img.shields.io/badge/Laravel-12-red)
+![Redis](https://img.shields.io/badge/Redis-7-red)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 A production-grade, multi-tenant incident management backend — think PagerDuty/OpsGenie — built as a portfolio project to demonstrate real-world backend architecture: strict tenant isolation, queue-based ingestion that survives alert floods, a severity-gated state machine with an append-only audit trail, and a time-based escalation engine. Backend API only; no frontend.
+
+## Database Schema
+
+10 tables with foreign key relationships and composite indexes optimized for multi-tenant query patterns.
+
+![Database Schema](docs/database-schema.png)
+
+→ [View interactive schema on dbdiagram.io](https://dbdiagram.io/d/6a47fee44ac62e474c274234)
+
+---
 
 ## Architecture Overview
 
@@ -56,7 +72,7 @@ A production-grade, multi-tenant incident management backend — think PagerDuty
 **Requirements:** PHP 8.2+, Composer, MySQL 8, Redis 7 (on Windows: [Memurai](https://www.memurai.com/) works well).
 
 ```bash
-git clone <repo-url> incident-management && cd incident-management
+git clone https://github.com/shaimaa-alanaswah/incident-management-api.git incident-management && cd incident-management
 composer install
 cp .env.example .env
 php artisan key:generate
@@ -143,3 +159,8 @@ What to observe:
 - `php artisan queue:work --queue=alerts,escalations,notifications` — watch the workers drain the backlog; each alert becomes an incident, an escalation evaluation, and a notification.
 - `tail -f storage/logs/laravel.log` — `Simulated notification sent to ...` lines confirm end-to-end delivery; `notification_logs` fills with `sent` rows.
 - `GET /api/v1/stats/overview` and `/stats/volume` — counts update as the backlog drains.
+
+## Roadmap
+- [ ] Postman collection — ready-to-import API testing
+- [ ] Real notification transport (Laravel Mail + Slack webhooks)
+- [ ] POST /register — tenant self-registration endpoint
