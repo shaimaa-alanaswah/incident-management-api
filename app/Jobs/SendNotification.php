@@ -18,8 +18,11 @@ class SendNotification implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public function __construct(public Incident $incident, public User $user)
-    {
+    public function __construct(
+        public Incident $incident,
+        public User $user,
+        public NotificationChannel $channel = NotificationChannel::Email,
+    ) {
         $this->onQueue('notifications');
     }
 
@@ -30,7 +33,7 @@ class SendNotification implements ShouldQueue
         $log = NotificationLog::create([
             'incident_id' => $this->incident->id,
             'user_id' => $this->user->id,
-            'channel' => NotificationChannel::Email,
+            'channel' => $this->channel,
             'payload' => [
                 'incident_title' => $this->incident->title,
                 'severity' => $this->incident->severity->value,
