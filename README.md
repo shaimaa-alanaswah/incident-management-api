@@ -67,6 +67,39 @@ A production-grade, multi-tenant incident management backend — think PagerDuty
 - **Redis `SET NX EX` for dedup instead of DB uniqueness.** Deduplication is a time-windowed concern, not a permanent constraint. An atomic Redis set with TTL gives one-round-trip dedup with automatic expiry and no cleanup jobs.
 - **Append-only audit log.** `incident_state_logs` has no update path (no `updated_at`, `const UPDATED_AT = null`) — history cannot be rewritten, which is the point of an audit trail.
 
+## Docker Setup (Recommended)
+
+The easiest way to run this project locally.
+Only requires Docker Desktop installed.
+
+```bash
+git clone https://github.com/shaimaa-alanaswah/incident-management-api.git
+cd incident-management-api
+cp .env.docker .env
+docker-compose up
+```
+
+First run takes 2-3 minutes to download images.
+Once running:
+- API: http://localhost:8000
+- MySQL: localhost:3306
+- Redis: localhost:6379
+
+Run migrations (first time only):
+```bash
+docker-compose exec app php artisan migrate
+```
+
+Run tests inside Docker:
+```bash
+docker-compose exec app php artisan test --env=testing
+```
+
+Stop everything:
+```bash
+docker-compose down
+```
+
 ## Local Setup
 
 **Requirements:** PHP 8.2+, Composer, MySQL 8, Redis 7 (on Windows: [Memurai](https://www.memurai.com/) works well).
@@ -161,5 +194,6 @@ What to observe:
 - `GET /api/v1/stats/overview` and `/stats/volume` — counts update as the backlog drains.
 
 ## Roadmap
+- [x] Docker Compose — one-command local setup
 - [ ] Postman collection — ready-to-import API testing (coming soon)
 - [ ] Real notification transport (Laravel Mail + Slack webhooks)

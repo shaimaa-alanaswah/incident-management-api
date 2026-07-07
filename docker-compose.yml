@@ -1,0 +1,174 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    command: sh -c "php artisan config:clear && php artisan cache:clear && php artisan route:clear && php artisan view:clear && php artisan serve --host=0.0.0.0 --port=8000"
+    depends_on:
+      - mysql
+      - redis
+    environment:
+      APP_NAME: IncidentManagementAPI
+      APP_ENV: local
+      APP_KEY: base64:uYqg73O0/T9zQvoPp8hcKF7bwm9+dp0Km1M5icYK1bQ=
+      APP_DEBUG: "true"
+      APP_URL: http://localhost:8000
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_DATABASE: incident_management
+      DB_USERNAME: incident_mgmt
+      DB_PASSWORD: secret
+      DATABASE_URL: ""
+      REDIS_CLIENT: predis
+      REDIS_HOST: redis
+      REDIS_PASSWORD: "null"
+      REDIS_PORT: "6379"
+      CACHE_STORE: redis
+      QUEUE_CONNECTION: redis
+      SESSION_DRIVER: redis
+      LOG_CHANNEL: stack
+      LOG_LEVEL: debug
+    volumes:
+      - ./app:/var/www/html/app
+      - ./config:/var/www/html/config
+      - ./database:/var/www/html/database
+      - ./routes:/var/www/html/routes
+      - ./storage:/var/www/html/storage
+      - ./resources:/var/www/html/resources
+      - ./public:/var/www/html/public
+      - ./tests:/var/www/html/tests
+      - ./artisan:/var/www/html/artisan
+      - ./bootstrap/app.php:/var/www/html/bootstrap/app.php
+      - ./.env.testing:/var/www/html/.env.testing
+    networks:
+      - incident-network
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: incident_management
+      MYSQL_USER: incident_mgmt
+      MYSQL_PASSWORD: secret
+      MYSQL_ROOT_PASSWORD: rootsecret
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - incident-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - incident-network
+    command: redis-server --appendonly yes
+
+  queue-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: php artisan queue:work redis --queue=alerts,escalations,notifications --tries=3 --sleep=3
+    depends_on:
+      - app
+      - mysql
+      - redis
+    environment:
+      APP_NAME: IncidentManagementAPI
+      APP_ENV: local
+      APP_KEY: base64:uYqg73O0/T9zQvoPp8hcKF7bwm9+dp0Km1M5icYK1bQ=
+      APP_DEBUG: "true"
+      APP_URL: http://localhost:8000
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_DATABASE: incident_management
+      DB_USERNAME: incident_mgmt
+      DB_PASSWORD: secret
+      REDIS_CLIENT: predis
+      REDIS_HOST: redis
+      REDIS_PASSWORD: "null"
+      REDIS_PORT: "6379"
+      CACHE_STORE: redis
+      QUEUE_CONNECTION: redis
+      SESSION_DRIVER: redis
+      LOG_CHANNEL: stack
+      LOG_LEVEL: debug
+    volumes:
+      - ./app:/var/www/html/app
+      - ./config:/var/www/html/config
+      - ./database:/var/www/html/database
+      - ./routes:/var/www/html/routes
+      - ./storage:/var/www/html/storage
+      - ./resources:/var/www/html/resources
+      - ./public:/var/www/html/public
+      - ./tests:/var/www/html/tests
+      - ./artisan:/var/www/html/artisan
+      - ./bootstrap/app.php:/var/www/html/bootstrap/app.php
+    networks:
+      - incident-network
+    restart: unless-stopped
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: sh -c "while true; do php artisan schedule:run; sleep 60; done"
+    depends_on:
+      - app
+      - mysql
+      - redis
+    environment:
+      APP_NAME: IncidentManagementAPI
+      APP_ENV: local
+      APP_KEY: base64:uYqg73O0/T9zQvoPp8hcKF7bwm9+dp0Km1M5icYK1bQ=
+      APP_DEBUG: "true"
+      APP_URL: http://localhost:8000
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_DATABASE: incident_management
+      DB_USERNAME: incident_mgmt
+      DB_PASSWORD: secret
+      REDIS_CLIENT: predis
+      REDIS_HOST: redis
+      REDIS_PASSWORD: "null"
+      REDIS_PORT: "6379"
+      CACHE_STORE: redis
+      QUEUE_CONNECTION: redis
+      SESSION_DRIVER: redis
+      LOG_CHANNEL: stack
+      LOG_LEVEL: debug
+    volumes:
+      - ./app:/var/www/html/app
+      - ./config:/var/www/html/config
+      - ./database:/var/www/html/database
+      - ./routes:/var/www/html/routes
+      - ./storage:/var/www/html/storage
+      - ./resources:/var/www/html/resources
+      - ./public:/var/www/html/public
+      - ./tests:/var/www/html/tests
+      - ./artisan:/var/www/html/artisan
+      - ./bootstrap/app.php:/var/www/html/bootstrap/app.php
+    networks:
+      - incident-network
+    restart: unless-stopped
+
+networks:
+  incident-network:
+    driver: bridge
+
+volumes:
+  mysql-data:
+  redis-data:
