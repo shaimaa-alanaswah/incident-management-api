@@ -6,18 +6,24 @@ use Illuminate\Support\Facades\Queue;
 // Queue is faked in every test here: ingestion only ever enqueues work, and
 // letting ProcessIncomingAlert actually run would touch the shared Redis
 // dedup keys and make reruns within the 5-minute window flaky.
+//
+// POST /alerts sits behind VerifyWebhookSignature, so every ingestion request
+// must carry an X-Signature header — signedAlertHeaders() computes it from
+// the same payload passed to postJson().
 
 test('valid alert returns 202', function () {
     Queue::fake();
     $tenant = makeTenant();
     $key = makeApiKey($tenant);
 
-    $this->postJson('/api/v1/alerts', [
+    $payload = [
         'source' => 'datadog',
         'title' => 'CPU above 90%',
         'severity' => 'P2',
         'body' => ['cpu' => 93],
-    ], authHeaders($key))
+    ];
+
+    $this->postJson('/api/v1/alerts', $payload, signedAlertHeaders($key, $payload))
         ->assertStatus(202)
         ->assertJsonStructure(['message', 'alert_id']);
 
@@ -33,11 +39,14 @@ test('ProcessIncomingAlert job is pushed to the alerts queue', function () {
     $tenant = makeTenant();
     $key = makeApiKey($tenant);
 
-    $this->postJson('/api/v1/alerts', [
+    $payload = [
         'source' => 'grafana',
         'title' => 'Disk almost full',
         'severity' => 'P3',
-    ], authHeaders($key))->assertStatus(202);
+    ];
+
+    $this->postJson('/api/v1/alerts', $payload, signedAlertHeaders($key, $payload))
+        ->assertStatus(202);
 
     Queue::assertPushedOn('alerts', ProcessIncomingAlert::class);
 });
@@ -47,10 +56,12 @@ test('missing source returns 422', function () {
     $tenant = makeTenant();
     $key = makeApiKey($tenant);
 
-    $this->postJson('/api/v1/alerts', [
+    $payload = [
         'title' => 'No source given',
         'severity' => 'P2',
-    ], authHeaders($key))
+    ];
+
+    $this->postJson('/api/v1/alerts', $payload, signedAlertHeaders($key, $payload))
         ->assertStatus(422)
         ->assertJsonValidationErrors('source');
 });
@@ -60,10 +71,12 @@ test('missing title returns 422', function () {
     $tenant = makeTenant();
     $key = makeApiKey($tenant);
 
-    $this->postJson('/api/v1/alerts', [
+    $payload = [
         'source' => 'pingdom',
         'severity' => 'P2',
-    ], authHeaders($key))
+    ];
+
+    $this->postJson('/api/v1/alerts', $payload, signedAlertHeaders($key, $payload))
         ->assertStatus(422)
         ->assertJsonValidationErrors('title');
 });
@@ -73,11 +86,13 @@ test('invalid severity returns 422', function () {
     $tenant = makeTenant();
     $key = makeApiKey($tenant);
 
-    $this->postJson('/api/v1/alerts', [
+    $payload = [
         'source' => 'datadog',
         'title' => 'Bad severity',
         'severity' => 'P9',
-    ], authHeaders($key))
+    ];
+
+    $this->postJson('/api/v1/alerts', $payload, signedAlertHeaders($key, $payload))
         ->assertStatus(422)
         ->assertJsonValidationErrors('severity');
 });
@@ -87,12 +102,30 @@ test('valid severity is accepted', function (string $severity) {
     $tenant = makeTenant();
     $key = makeApiKey($tenant);
 
-    $this->postJson('/api/v1/alerts', [
+    $payload = [
         'source' => 'custom',
         'title' => "Severity {$severity} alert",
         'severity' => $severity,
-    ], authHeaders($key))->assertStatus(202);
+    ];
+
+    $this->postJson('/api/v1/alerts', $payload, signedAlertHeaders($key, $payload))
+        ->assertStatus(202);
 })->with(['P1', 'P2', 'P3', 'P4']);
+
+test('unsigned alert ingestion returns 401', function () {
+    Queue::fake();
+    $tenant = makeTenant();
+    $key = makeApiKey($tenant);
+
+    // Valid bearer token, valid payload — but no X-Signature header.
+    $this->postJson('/api/v1/alerts', [
+        'source' => 'datadog',
+        'title' => 'Unsigned alert',
+        'severity' => 'P2',
+    ], authHeaders($key))
+        ->assertStatus(401)
+        ->assertJsonPath('error', 'Missing webhook signature');
+});
 
 test('rate limit exceeded returns 429 for free tier', function () {
     Queue::fake();
@@ -111,18 +144,23 @@ test('rate limit exceeded returns 429 for free tier', function () {
     }
 
     foreach (range(1, 60) as $i) {
-        $this->postJson('/api/v1/alerts', [
+        $payload = [
             'source' => 'datadog',
             'title' => "Flood alert {$i}",
             'severity' => 'P4',
-        ], authHeaders($key))->assertStatus(202);
+        ];
+
+        $this->postJson('/api/v1/alerts', $payload, signedAlertHeaders($key, $payload))
+            ->assertStatus(202);
     }
 
-    $this->postJson('/api/v1/alerts', [
+    $payload = [
         'source' => 'datadog',
         'title' => 'Flood alert 61',
         'severity' => 'P4',
-    ], authHeaders($key))
+    ];
+
+    $this->postJson('/api/v1/alerts', $payload, signedAlertHeaders($key, $payload))
         ->assertStatus(429)
         ->assertJsonPath('error', 'Rate limit exceeded')
         ->assertJsonStructure(['error', 'limit', 'retry_after']);

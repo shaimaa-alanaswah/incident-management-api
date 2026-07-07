@@ -1,7 +1,7 @@
 # Incident Management SaaS API
 
 ![CI](https://github.com/shaimaa-alanaswah/incident-management-api/actions/workflows/tests.yml/badge.svg)
-![Tests](https://img.shields.io/badge/tests-35%20passed%20%7C%20137%20assertions-brightgreen)
+![Tests](https://img.shields.io/badge/tests-36%20passed%20%7C%20139%20assertions-brightgreen)
 ![PHP](https://img.shields.io/badge/PHP-8.2-blue)
 ![Laravel](https://img.shields.io/badge/Laravel-12-red)
 ![Redis](https://img.shields.io/badge/Redis-7-red)

@@ -53,3 +53,16 @@ function authHeaders(string $plaintextKey): array
         'Accept' => 'application/json',
     ];
 }
+
+/**
+ * Auth headers plus the X-Signature webhook signature for alert ingestion.
+ * The signature is HMAC-SHA256 of the raw JSON body using the bearer key as
+ * the secret — json_encode() here must match how postJson() encodes the
+ * payload, since VerifyWebhookSignature hashes $request->getContent().
+ */
+function signedAlertHeaders(string $plaintextKey, array $payload): array
+{
+    return array_merge(authHeaders($plaintextKey), [
+        'X-Signature' => hash_hmac('sha256', json_encode($payload), $plaintextKey),
+    ]);
+}
