@@ -1,0 +1,595 @@
+{
+  "info": {
+    "_postman_id": "b7e3f1a2-4c8d-4e5f-9a6b-1d2c3e4f5a6b",
+    "name": "Incident Management API",
+    "description": "Multi-tenant incident management SaaS API. All endpoints (except POST /register) require a Bearer API key — run POST /register first and copy the returned key into the environment's api_key variable. Alert ingestion additionally requires an HMAC-SHA256 X-Signature header, computed automatically by that request's pre-request script.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{api_key}}", "type": "string" }
+    ]
+  },
+  "item": [
+    {
+      "name": "Auth & API Keys",
+      "item": [
+        {
+          "name": "Register Tenant",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.api_key && res.api_key.key) {",
+                  "  pm.environment.set('api_key', res.api_key.key);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Acme Corp\",\"slug\":\"acme-corp\",\"plan_tier\":\"pro\",\"owner_name\":\"Alice\",\"owner_email\":\"alice@acme.com\"}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/register",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "register"]
+            },
+            "description": "Creates tenant + owner + API key. The returned key is AUTO-SAVED to the environment's api_key variable by this request's test script — every other request in the collection works immediately after running this once.\n\nPublic endpoint — no auth required. Returns 201 with tenant, user, and api_key objects. The plaintext key is shown ONCE and never again (only its SHA-256 hash is stored). 422 if slug is taken or validation fails."
+          }
+        },
+        {
+          "name": "Generate API Key",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"CI Key\"}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/keys",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "keys"]
+            },
+            "description": "Issues an additional API key for the authenticated tenant. Returns 201 with the plaintext key (shown once) and a warning to store it securely. 422 if name is missing."
+          }
+        },
+        {
+          "name": "Revoke API Key",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/keys/:id",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "keys", ":id"],
+              "variable": [
+                { "key": "id", "value": "2", "description": "The API key id to revoke" }
+              ]
+            },
+            "description": "Revokes an API key (sets revoked_at). Returns 200 with a confirmation message. 404 if the key doesn't exist or belongs to another tenant; 409 if it is already revoked."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Alerts",
+      "item": [
+        {
+          "name": "Ingest Alert",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.request.body.raw;",
+                  "const key = pm.environment.get('api_key');",
+                  "const signature = CryptoJS.HmacSHA256(body, key).toString();",
+                  "pm.request.headers.add({key: 'X-Signature', value: signature});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"source\":\"datadog\",\"title\":\"High CPU on web-01\",\"severity\":\"P1\",\"body\":{\"host\":\"web-01\",\"cpu\":98}}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "alerts"]
+            },
+            "description": "IMPORTANT: This endpoint requires an X-Signature header = HMAC-SHA256 of the raw JSON body using your API key as secret. Use the pre-request script included in this request to compute it automatically.\n\nIngests an alert and returns 202 Accepted immediately with alert_id — processing (dedup, incident creation, notifications) happens in queue workers. 401 if the signature is missing/invalid; 422 if source/title/severity fail validation; 429 if the tenant's rate limit is exceeded."
+          }
+        },
+        {
+          "name": "Ingest Alert (Unsigned — expect 401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"source\":\"datadog\",\"title\":\"High CPU on web-01\",\"severity\":\"P1\",\"body\":{\"host\":\"web-01\",\"cpu\":98}}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "alerts"]
+            },
+            "description": "Deliberately unsigned to demonstrate the mandatory HMAC signature. Expect 401 Missing webhook signature."
+          }
+        },
+        {
+          "name": "List Alerts",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "alerts"],
+              "query": [
+                { "key": "status", "value": "new", "disabled": true, "description": "new | deduplicated | linked | suppressed" },
+                { "key": "severity", "value": "P1", "disabled": true, "description": "P1 | P2 | P3 | P4" },
+                { "key": "source", "value": "datadog", "disabled": true }
+              ]
+            },
+            "description": "Paginated list of the tenant's alerts, newest first (default 25/page, max 100 via per_page). Enable the query params to filter by status, severity, or source. Returns 200 with a Laravel paginator payload."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Incidents",
+      "item": [
+        {
+          "name": "List Incidents",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/incidents",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "incidents"],
+              "query": [
+                { "key": "status", "value": "open", "disabled": true, "description": "open | acknowledged | resolved | closed" },
+                { "key": "severity", "value": "P1", "disabled": true, "description": "P1 | P2 | P3 | P4" }
+              ]
+            },
+            "description": "Paginated list of the tenant's incidents, newest first. Enable the query params to filter by status or severity. Returns 200 with a paginator payload."
+          }
+        },
+        {
+          "name": "Get Incident",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/incidents/:id",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "incidents", ":id"],
+              "variable": [
+                { "key": "id", "value": "1", "description": "Incident id" }
+              ]
+            },
+            "description": "Incident detail with its full state history (state_logs) eager-loaded in chronological order. Returns 200; 404 if the incident doesn't exist or belongs to another tenant."
+          }
+        },
+        {
+          "name": "Resolve Directly (expect 422 — severity gate)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\":\"Trying direct resolve\"}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/incidents/:id/resolve",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "incidents", ":id", "resolve"],
+              "variable": [
+                { "key": "id", "value": "1", "description": "Incident id (use an open P1/P2 incident)" }
+              ]
+            },
+            "description": "P1/P2 incidents cannot go open→resolved without acknowledgment. Expect 422 with the severity gate message. This demonstrates the state machine's business rules."
+          }
+        },
+        {
+          "name": "Acknowledge Incident",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\":\"Taking ownership\"}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/incidents/:id/acknowledge",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "incidents", ":id", "acknowledge"],
+              "variable": [
+                { "key": "id", "value": "1", "description": "Incident id" }
+              ]
+            },
+            "description": "Transitions open → acknowledged and sets acknowledged_at. Optional body: reason (audit trail), assigned_to (tenant user id). Returns 200 with the updated incident; 422 if the transition is invalid (e.g. already resolved); 404 if not found."
+          }
+        },
+        {
+          "name": "Resolve Incident",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\":\"Root cause fixed\"}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/incidents/:id/resolve",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "incidents", ":id", "resolve"],
+              "variable": [
+                { "key": "id", "value": "1", "description": "Incident id" }
+              ]
+            },
+            "description": "Transitions to resolved and sets resolved_at. Severity gate: P1/P2 incidents must be acknowledged first — resolving directly from open returns 422 with an explanatory message. P3/P4 may resolve straight from open. Returns 200 on success."
+          }
+        },
+        {
+          "name": "Close Incident",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\":\"Post-mortem complete\"}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/incidents/:id/close",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "incidents", ":id", "close"],
+              "variable": [
+                { "key": "id", "value": "1", "description": "Incident id" }
+              ]
+            },
+            "description": "Transitions resolved → closed (terminal state) and sets closed_at. Returns 200; 422 if the incident isn't currently resolved. Closed incidents cannot transition anywhere."
+          }
+        },
+        {
+          "name": "Incident Audit Log",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/incidents/:id/logs",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "incidents", ":id", "logs"],
+              "variable": [
+                { "key": "id", "value": "1", "description": "Incident id" }
+              ]
+            },
+            "description": "Append-only audit trail for the incident, paginated, oldest first. Each row records from_status, to_status, changed_by, reason, and timestamp. Returns 200."
+          }
+        },
+        {
+          "name": "Assign Escalation Policy",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"escalation_policy_id\":1}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/incidents/:id/assign-policy",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "incidents", ":id", "assign-policy"],
+              "variable": [
+                { "key": "id", "value": "1", "description": "Incident id" }
+              ]
+            },
+            "description": "Attaches an escalation policy to the incident (the scheduler then walks its steps while the incident stays open). Pass \"escalation_policy_id\": null to detach. Returns 200 with the updated incident; 422 if the policy doesn't exist, is soft-deleted, or belongs to another tenant."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Escalation Policies",
+      "item": [
+        {
+          "name": "List Policies",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/escalation-policies",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "escalation-policies"]
+            },
+            "description": "Paginated list of the tenant's escalation policies, ordered by name. Returns 200."
+          }
+        },
+        {
+          "name": "Create Policy",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Default Policy\",\"repeat_count\":0,\"steps\":[{\"step_order\":1,\"delay_minutes\":5,\"notify_user_id\":1,\"notify_channel\":\"email\"},{\"step_order\":2,\"delay_minutes\":10,\"notify_user_id\":1,\"notify_channel\":\"slack\"}]}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/escalation-policies",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "escalation-policies"]
+            },
+            "description": "Creates a policy with its nested steps in one transaction. steps is required (min 1); each step needs step_order, delay_minutes (min 1), notify_channel (email|slack|webhook), and optionally notify_user_id (must belong to your tenant). Returns 201 with the policy + steps; 422 on validation failure."
+          }
+        },
+        {
+          "name": "Get Policy",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/escalation-policies/:id",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "escalation-policies", ":id"],
+              "variable": [
+                { "key": "id", "value": "1", "description": "Policy id" }
+              ]
+            },
+            "description": "Policy detail with steps eager-loaded in step_order. Returns 200; 404 if not found or cross-tenant."
+          }
+        },
+        {
+          "name": "Update Policy",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Default Policy (updated)\",\"repeat_count\":1,\"steps\":[{\"step_order\":1,\"delay_minutes\":5,\"notify_user_id\":1,\"notify_channel\":\"email\"},{\"step_order\":2,\"delay_minutes\":10,\"notify_user_id\":1,\"notify_channel\":\"slack\"}]}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/escalation-policies/:id",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "escalation-policies", ":id"],
+              "variable": [
+                { "key": "id", "value": "1", "description": "Policy id" }
+              ]
+            },
+            "description": "Updates the policy and REPLACES all steps with the ones provided (delete + reinsert in one transaction). Same validation rules as create. Returns 200 with the fresh policy + steps."
+          }
+        },
+        {
+          "name": "Delete Policy",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/escalation-policies/:id",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "escalation-policies", ":id"],
+              "variable": [
+                { "key": "id", "value": "1", "description": "Policy id" }
+              ]
+            },
+            "description": "Soft-deletes the policy. Returns 204 No Content on success; 409 Conflict if the policy is referenced by any open or acknowledged incident (resolved/closed incidents don't block deletion)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "On-Call Schedules",
+      "item": [
+        {
+          "name": "List Schedules",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/schedules",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "schedules"]
+            },
+            "description": "Paginated list of on-call shifts ordered by start time. Each row includes an is_on_call boolean indicating whether the shift is active right now. Returns 200."
+          }
+        },
+        {
+          "name": "Create Schedule",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Primary On-Call\",\"user_id\":1,\"starts_at\":\"2026-07-08T00:00:00Z\",\"ends_at\":\"2026-07-15T00:00:00Z\"}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/schedules",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "schedules"]
+            },
+            "description": "Creates an on-call shift. ends_at must be after starts_at; user_id must belong to your tenant. Returns 201 — includes a non-blocking \"warning\" key if the shift overlaps another shift for the same user. 422 on validation failure."
+          }
+        },
+        {
+          "name": "Who Is On Call Now",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/schedules/oncall",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "schedules", "oncall"]
+            },
+            "description": "Returns the user currently on call (cached for 60 seconds). 200 with the user object, or 404 with a message if nobody is on call right now."
+          }
+        },
+        {
+          "name": "Delete Schedule",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/schedules/:id",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "schedules", ":id"],
+              "variable": [
+                { "key": "id", "value": "1", "description": "Schedule id" }
+              ]
+            },
+            "description": "Deletes a FUTURE shift. Returns 204 No Content; 409 Conflict if the shift has already started or ended; 404 if not found or cross-tenant."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Stats & Metrics",
+      "item": [
+        {
+          "name": "Overview",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/stats/overview",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "stats", "overview"]
+            },
+            "description": "Dashboard metrics: total_incidents, per-status counts (open/acknowledged/resolved/closed), and avg_mttr_minutes (average minutes from created_at to resolved_at; null if nothing has been resolved yet). Returns 200."
+          }
+        },
+        {
+          "name": "Alert Volume",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/stats/volume?groupBy=hour",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "stats", "volume"],
+              "query": [
+                { "key": "groupBy", "value": "hour", "description": "hour | day (default: hour)" }
+              ]
+            },
+            "description": "Alert counts over the last 7 days as an array of {period, count}, ascending by period. groupBy=hour buckets by hour, groupBy=day by calendar day. 422 for any other groupBy value. Returns 200."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Notification Logs",
+      "item": [
+        {
+          "name": "List Notifications",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/notifications",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "notifications"],
+              "query": [
+                { "key": "status", "value": "sent", "disabled": true, "description": "queued | sent | failed" },
+                { "key": "channel", "value": "email", "disabled": true, "description": "email | slack | webhook" },
+                { "key": "incident_id", "value": "1", "disabled": true }
+              ]
+            },
+            "description": "Paginated notification log (what was sent, to whom, via which channel, and whether it succeeded), newest first, with incident (id, title) and user (id, name) summaries eager-loaded. Enable the query params to filter. Returns 200."
+          }
+        }
+      ]
+    }
+  ]
+}

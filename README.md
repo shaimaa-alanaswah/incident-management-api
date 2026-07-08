@@ -179,6 +179,15 @@ All endpoints are under `/api/v1` and require `Authorization: Bearer <api-key>`,
 
 Error semantics: `401` bad/missing/revoked/expired key or inactive tenant · `404` resource not found *or belongs to another tenant* · `409` conflicting state (policy in use, active shift) · `422` validation failure or invalid state transition · `429` rate limit exceeded (includes `retry_after`).
 
+## Postman Collection
+
+Ready-to-import collection covering all 24 endpoints — 26 requests in total, including 2 error-demonstration requests (unsigned alert ingestion → 401, direct P1 resolve → 422 severity gate) — organized by resource, with pre-filled example bodies.
+
+1. Import both files from the postman/ folder into Postman
+2. Select the "Incident Management — Local" environment
+3. Run POST /register first — its test script auto-saves the returned API key into the api_key environment variable
+4. The alert ingestion request auto-computes its HMAC signature via a pre-request script
+
 ## Load Testing
 
 ```bash
@@ -196,5 +205,5 @@ What to observe:
 
 ## Roadmap
 - [x] Docker Compose — one-command local setup
-- [ ] Postman collection — ready-to-import API testing (coming soon)
+- [x] Postman collection — ready-to-import API testing
 - [ ] Real notification transport (Laravel Mail + Slack webhooks)
